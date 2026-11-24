@@ -1,0 +1,87 @@
+import time
+import requests
+from modules.load_config import dprint
+from modules.crypto_aes import create_sign, aes_encrypt
+from datetime import datetime, timezone, timedelta
+
+shanghai_tz = timezone(timedelta(hours=8))
+
+
+# 查用户是否已经打卡
+def check_sign(check_sign_token, sign_type, userId=None, sign_info=None):
+    check_sign_url = "https://api.moguding.net:9000/attendence/clock/v2/listSynchro"
+    # 获取当天的打卡信息
+    search_start_time, search_end_time = get_current_day()
+    today_prefix = search_start_time[:10]
+    data = {
+        "startTime": search_start_time,
+        "endTime": search_end_time,
+        "t": aes_encrypt(str(int(time.time() * 1000))),
+    }
+    headers = {
+        "Authorization": f"{check_sign_token}",
+        "roleKey": "student",
+        "rolekey": "student",
+        "user-agent": "Dart/3.7 (dart:io)",
+        "appversion": "6.0.0",
+        "content-type": "application/json; charset=utf-8",
+    }
+    if userId:
+        headers["userid"] = str(userId)
+    if sign_info:
+        headers["sign"] = sign_info
+    elif userId:
+        headers["sign"] = create_sign(str(userId) + "student")
+
+    try:
+        response = requests.post(check_sign_url, json=data, headers=headers, verify=False, timeout=10)
+        response_data = response.json()
+    except Exception as e:
+        dprint(f"查询打卡记录网络异常: {e}")
+        return False
+
+    # 检查是否有过当天的同类型打卡记录
+    if not isinstance(response_data, dict) or 'data' not in response_data or not response_data['data']:
+        return False
+    for record in response_data["data"]:
+        rec_time = str(record.get("createTime", ""))
+        if record.get("type") == sign_type and (not rec_time or rec_time.startswith(today_prefix)):
+            # 当天已打过该类型卡
+            return True
+    # 没打过卡
+    return False
+
+
+# 获取当前月份起始时间
+# 这里的具体时间无所谓，返回的内容是全天的签到记录, 写时间是因为标准的时间格式要求
+# def get_current_month():
+#     now = datetime.now()
+#     start_of_month = datetime(now.year, now.month, 1)
+#     if now.month == 12:
+#         next_month_start = datetime(now.year + 1, 1, 1)
+#     else:
+#         next_month_start = datetime(now.year, now.month + 1, 1)
+#     end_of_month = next_month_start - timedelta(days=1)
+#     month_start_time = start_of_month.strftime("%Y-%m-%d %H:%M:%S")
+#     month_end_time = end_of_month.strftime("%Y-%m-%d 00:00:00")
+#     return month_start_time, month_end_time
+
+
+# 获取当天起始时间
+def get_current_day():
+    now = datetime.now(shanghai_tz)
+    start_of_day = datetime(now.year, now.month, now.day)
+    end_of_day = start_of_day + timedelta(days=1, seconds=-1)
+    day_start_time = start_of_day.strftime("%Y-%m-%d 00:00:00")
+    day_end_time = end_of_day.strftime("%Y-%m-%d 23:59:59")
+    return day_start_time, day_end_time
+
+
+# 开发环境测试环境解除注释
+# dprint("\n❗注意：以下输出是check_sign模块的开发环境信息，👇")
+# day_start_time, day_end_time = get_current_day()
+# dprint("打卡信息查询日期范围:\n", day_start_time, "→", day_end_time)
+# check_sign(
+#     check_sign_token="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+#     sign_type="START",
+# )
