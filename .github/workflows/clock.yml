@@ -80,4 +80,10 @@ jobs:
           PROXY_API_URL: ${{ secrets.PROXY_API_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_PROVIDER: ${{ secrets.AI_PROVIDER || 'deepseek' }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
+          AI_MODEL: ${{ secrets.AI_MODEL }}
+          WEEK_MIN_WORDS: ${{ secrets.WEEK_MIN_WORDS || '300' }}
+          MONTH_MIN_WORDS: ${{ secrets.MONTH_MIN_WORDS || '600' }}
         run: python gongxueyun_auto.py --mode ${{ inputs.mode || 'auto' }}
