@@ -61,7 +61,11 @@ def send_email(subject, content, recipient=None):
     smtp_user = os.getenv("SMTP_USER", "").strip()
     recipient = (recipient or os.getenv("SMTP_TO", "").strip() or smtp_user).strip()
     smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com").strip()
-    smtp_port = int(os.getenv("SMTP_PORT", "465"))
+    try:
+        smtp_port = int((os.getenv("SMTP_PORT") or "465").strip() or "465")
+    except ValueError:
+        print("[CLOCK_API_RAW] SMTP_PORT 配置非法，已使用默认 465")
+        smtp_port = 465
     if not smtp_password or not smtp_user or not recipient:
         print("[CLOCK_API_RAW] SMTP not fully configured. Email notification skipped.")
         return False
@@ -167,6 +171,13 @@ def main():
         print(f"[CLOCK_API_RAW] Clock/Sign-in result: {json.dumps(clock_res, ensure_ascii=False)}")
         report_res = submit_reports(users)
 
+    # AI 生成失败导致报告流程中止：邮件通知后结束本轮，避免继续使用空内容提交
+    if isinstance(report_res, dict) and report_res.get("status") == "aborted":
+        abort_text = report_res.get("message", "AI 报告生成失败，已中止提交")
+        print(f"[CLOCK_API_RAW] {abort_text}", flush=True)
+        send_email("【工学云】AI报告生成失败，已取消本轮提交", abort_text)
+        compat_adapter.notify_all("工学云AI报告失败通知", abort_text)
+        return
     auth_notice = ""
     try:
         from modules.save_user_info import latest_auth_info
