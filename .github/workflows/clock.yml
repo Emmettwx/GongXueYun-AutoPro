@@ -18,6 +18,7 @@ on:
   schedule:
     # 下班打卡 + 多轮补签保底（代码内置判重：已打过则自动跳过，不会重复打卡）
     # 北京时间 18:30 / 19:00 / 19:30 / 20:00 / 20:30 共 5 次机会
+    # 18:30 跑 auto（打卡+周报），其余 4 次只跑 clock（纯打卡重试，省钱省额度）
     # 目的：风控是间歇性的，多轮重试可提高成功率，同时便于观察风控持续时长
     - cron: "30 10 * * *"   # 18:30
     - cron: "0 11 * * *"    # 19:00
@@ -88,4 +89,4 @@ jobs:
           AI_MODEL: ${{ secrets.AI_MODEL }}
           WEEK_MIN_WORDS: ${{ secrets.WEEK_MIN_WORDS || '300' }}
           MONTH_MIN_WORDS: ${{ secrets.MONTH_MIN_WORDS || '600' }}
-        run: python gongxueyun_auto.py --mode ${{ inputs.mode || 'auto' }}
+        run: python gongxueyun_auto.py --mode ${{ inputs.mode || (github.event.schedule == '30 10 * * *' && 'auto' || 'clock') }}
