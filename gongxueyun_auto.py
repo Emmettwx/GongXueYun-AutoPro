@@ -158,6 +158,24 @@ def main():
     clock_res = {}
     report_res = {}
 
+    # 自动补签申请：在打卡前提交本月缺失工作日的补签申请（需管理员审批）
+    if args.mode in ("auto", "clock") and os.getenv("AUTO_MAKEUP", "").strip().lower() in ["1", "true", "yes"]:
+        try:
+            from modules.get_login_token import get_token
+            from modules.get_plan_id import get_plan_id
+            from modules.crypto_aes import create_sign
+            from modules.makeup_sign import submit_makeup_requests
+            makeup_user = users[0]
+            mu = get_token(makeup_user)
+            if mu and mu.get("token") and mu.get("userId"):
+                mu_sign = create_sign(str(mu["userId"]) + "student")
+                mu_plan = get_plan_id(makeup_user, mu["token"], mu_sign)
+                makeup_res = submit_makeup_requests(
+                    makeup_user, mu["token"], mu["userId"], mu_plan, mu_sign, sign_type="END"
+                )
+                print(f"[CLOCK_API_RAW] Makeup result: {json.dumps(makeup_res, ensure_ascii=False)}", flush=True)
+        except Exception as e:
+            print(f"[MAKEUP_WARN] 自动补签申请流程异常: {e}", flush=True)
     if args.mode == "report":
         print("[CLOCK_API_RAW] 当前为周月报专项模式，跳过打卡直接执行周月报自动管理与补齐", flush=True)
         clock_res = {"status": "skipped", "message": "Report mode"}
