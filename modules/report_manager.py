@@ -529,6 +529,13 @@ def auto_manage_reports(user, token, user_id):
         job_id, student_id, job_info = get_job_info(user, token, plan_id, sign_info)
         print(f"[REPORT_MANAGER] 获取到实习岗位 jobId: {job_id}, studentId: {student_id}", flush=True)
 
+        # 从真实岗位信息中提炼岗位名称、工作内容与单位，注入 AI 提示词，避免生成内容与实习无关
+        job_title = (job_info.get("jobName") or job_info.get("name") or job_info.get("position") or "") if isinstance(job_info, dict) else ""
+        job_content = (job_info.get("jobContent") or job_info.get("content") or job_info.get("workContent") or job_info.get("description") or "") if isinstance(job_info, dict) else ""
+        company = (job_info.get("companyName") or job_info.get("company") or job_info.get("unitName") or "") if isinstance(job_info, dict) else ""
+        job_context = "；".join(x for x in [f"实习岗位：{job_title}" if job_title else "", f"岗位工作内容：{job_content}" if job_content else "", f"实习单位：{company}" if company else ""] if x)
+        print(f"[REPORT_MANAGER] 岗位上下文: {job_context[:120] or '(空)'}", flush=True)
+
         # 0. 拉取云端全部历史周报与月报，用于精准去重与序号延续
         print(f"[REPORT_MANAGER] 正在拉取用户云端历史周报与月报记录...", flush=True)
         hist_weeks = get_submitted_history(token, user_id, plan_id, "week")
@@ -601,12 +608,18 @@ def auto_manage_reports(user, token, user_id):
                 w_end = w.get("endTime", "")
                 title = f"第{user_week_index}周实习周报"
 
-                _, content = generate_report_content(
-                    "week",
-                    title_hint=title,
-                    extra_context=f"实习第{user_week_index}周，周期{w_start[:10]}至{w_end[:10]}",
-                    user=user
-                )
+                try:
+                    _, content = generate_report_content(
+                        "week",
+                        title_hint=title,
+                        extra_context=f"实习第{user_week_index}周，周期{w_start[:10]}至{w_end[:10]}。{job_context}",
+                        user=user,
+                        week_index=user_week_index
+                    )
+                except Exception as ai_err:
+                    abort_msg = f"周报[{title}] AI 生成失败，已中止本轮全部报告提交：{ai_err}"
+                    print(f"[REPORT_ABORT] {abort_msg}", flush=True)
+                    return {"status": "aborted", "message": abort_msg}
 
                 print(f"\n[REPORT_MANAGER] >>> 开始提交新周报 [{title}]（系统周次: {w_str}, 日期: {w_start[:10]}~{w_end[:10]}）...", flush=True)
                 sub_res = submit_single_report(
@@ -637,12 +650,18 @@ def auto_manage_reports(user, token, user_id):
                 m_end = f"{ym}-{last_day:02d} 23:59:59"
                 m_title = f"{m_val}月份实习月报总结"
 
-                _, content = generate_report_content(
-                    "month",
-                    title_hint=m_title,
-                    extra_context=f"月份: {ym}",
-                    user=user
-                )
+                try:
+                    _, content = generate_report_content(
+                        "month",
+                        title_hint=m_title,
+                        extra_context=f"月份: {ym}。{job_context}",
+                        user=user,
+                        week_index=None
+                    )
+                except Exception as ai_err:
+                    abort_msg = f"月报[{m_title}] AI 生成失败，已中止本轮全部报告提交：{ai_err}"
+                    print(f"[REPORT_ABORT] {abort_msg}", flush=True)
+                    return {"status": "aborted", "message": abort_msg}
                 print(f"\n[REPORT_MANAGER] >>> 开始提交新月报 [{m_title}]（月份: {ym}）...", flush=True)
                 m_res = submit_single_report(
                     user, token, user_id, plan_id, job_id, student_id, "month",
