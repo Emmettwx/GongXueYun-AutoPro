@@ -65,13 +65,22 @@ def check_token_alive(token, userId):
         "user-agent": DART_USER_AGENT,
     }
     try:
-        r = requests.post(url, json={"state": ""}, headers=headers, timeout=6, verify=False)
+        r = requests.post(url, json={"state": ""}, headers=headers, timeout=8, verify=False)
         return r.status_code == 200 and r.json().get("code") == 200
+    except requests.exceptions.RequestException:
+        return None  # 网络异常：无法判断凭证是否有效，绝不能因此误判为失效而重走滑块登录
     except Exception:
         return False
 
-def _post_request(url, headers, data, error_message):
-    response = requests.post(url, headers=headers, json=data, verify=False)
+def _post_request(url, headers, data, error_message, timeout=15):
+    try:
+        response = requests.post(url, headers=headers, json=data, verify=False, timeout=timeout)
+    except requests.exceptions.RequestException as e:
+        raise ValueError(
+            f"{error_message}: 网络连接失败（{e}）。"
+            "若在 GitHub Actions 上运行，通常是海外 IP 被工学云风控拦截，"
+            "请配置 PROXY_URL / PROXY_API_URL 国内代理后重试。"
+        )
     if response.status_code != 200:
         raise ValueError(f"{error_message}: {response.text}")
     return response.json()
@@ -86,10 +95,17 @@ def get_token(user, force_refresh=False):
         if cached:
             token = cached.get("token")
             userId = cached.get("userId")
-            if token and userId and check_token_alive(token, userId):
-                print(f"[SESSION] 复用本地长效登录凭证 (固定设备ID: {get_device_id(user)[:8]}***，免滑块登录)")
-                return cached
-            else:
+            if token and userId:
+                alive = check_token_alive(token, userId)
+                if alive is None:
+                    raise RuntimeError(
+                        "[NETWORK_BLOCKED] 无法连接 api.moguding.net:9000，缓存 Token 校验被网络超时中断。"
+                        "这通常是 GitHub Actions 海外 IP 被工学云风控拦截所致，"
+                        "请在 Secrets 配置 PROXY_URL（国内 HTTP 代理）后重试，避免反复触发滑块登录。"
+                    )
+                if alive:
+                    print(f"[SESSION] 复用本地长效登录凭证 (固定设备ID: {get_device_id(user)[:8]}***，免滑块登录)")
+                    return cached
                 dprint("[SESSION] 缓存凭证已失效，重新执行标准登录")
 
     fixed_device_id = get_device_id(user)
