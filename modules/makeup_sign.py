@@ -125,7 +125,9 @@ def submit_makeup_requests(user, token, user_id, plan_id, sign_info, sign_type="
 
     # 补签签名格式借鉴自 gonxueyun 项目：Android + 类型 + 计划 + 用户 + 地址 + 密钥
     # 参考实现中补签固定按 START（上班卡）提交，接口会按此受理
+    makeup_sign = create_sign("Android", "START", plan_id, str(user_id), address)
     # 关键：补签必须用老式请求头，否则会返回"请到应用商店下载最新版本APP"
+    headers = _legacy_headers(token, user_id, makeup_sign)
 
     base_payload = {
         "device": "Android",
