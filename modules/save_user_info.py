@@ -1,12 +1,16 @@
 import json, time, requests, os, urllib3, urllib.parse, urllib.request, smtplib
 from email.mime.text import MIMEText
 from email.header import Header
+from email.utils import formataddr
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from modules.map_headers import header_user_agent
 from modules.crypto_aes import aes_encrypt, create_sign
 
 # 全局收集 304 安全验证详情
 latest_auth_info = {}
+
+# 仓库所有者兜底（环境变量取不到时使用），确保 @提及 与指派一定能触发通知
+DEFAULT_GITHUB_OWNER = "Emmettwx"
 
 
 def _smtp_notify(title, content):
@@ -24,8 +28,9 @@ def _smtp_notify(title, content):
     server = os.getenv("SMTP_SERVER", "smtp.qq.com").strip()
     try:
         msg = MIMEText(content, "plain", "utf-8")
-        msg["From"] = Header(smtp_user, "utf-8")
-        msg["To"] = Header(recipient, "utf-8")
+        # QQ/163 等要求 From 为合法 RFC5322 地址，不能用 Header 包裹纯地址
+        msg["From"] = formataddr(("GongXueYun", smtp_user))
+        msg["To"] = recipient
         msg["Subject"] = Header(title, "utf-8")
         if port == 465:
             client = smtplib.SMTP_SSL(server, port, timeout=15)
@@ -135,7 +140,13 @@ def dispatch_cloud_notice(out_no, reg_url, sign_type="打卡", is_refresh=False)
                 f"\n\n- **👉👉 手机点此链接唤起支付宝（推荐）**:\n{pages_url}\n"
                 f"> 若微信内打不开，请点右上角【···】选择【在浏览器打开】\n"
             ) if pages_url else ""
+            # 通知关键：GitHub 不给自己创建的内容发通知，必须 @ 自己或指派给自己
+            gh_actor = (os.getenv("GITHUB_ACTOR") or "").strip()
+            gh_owner = (os.getenv("GITHUB_REPOSITORY_OWNER") or (gh_repo.split("/")[0] if gh_repo else "")).strip()
+            mention_target = gh_actor or gh_owner or DEFAULT_GITHUB_OWNER
+            mention_line = f"@{mention_target} ⚠️ 请立即处理，本条通过@提及触发通知\n\n" if mention_target else ""
             issue_body = (
+                f"{mention_line}"
                 f"## 📱 工学云打卡安全验证提醒\n\n"
                 f"GitHub Actions 云端正在执行工学云 **{sign_type}** 任务。\n"
                 f"因工学云风控检测到云服务器访问，需进行一次手机实名/人脸核验：\n\n"
@@ -145,12 +156,25 @@ def dispatch_cloud_notice(out_no, reg_url, sign_type="打卡", is_refresh=False)
                 f"> 平台官方单号每 5 分钟失效一次，若过期云端将**自动刷新单号并更新通知**。\n"
                 f"> 您在手机上随时点击**最新链接**在支付宝完成人脸核验，云端将**自动完成打卡**并关闭本通知！" + pages_block
             )
+            payload = {"title": issue_title, "body": issue_body}
+            if mention_target:
+                payload["assignees"] = [mention_target]
             r = requests.post(
                 f"https://api.github.com/repos/{gh_repo}/issues",
                 headers=gh_headers,
-                json={"title": issue_title, "body": issue_body},
+                json=payload,
                 timeout=10
             )
+            # 若因权限不足导致指派失败（422），去掉 assignees 重试，保证 Issue 一定能建出来
+            if r.status_code == 422 and "assignees" in payload:
+                print("[CLOUD_NOTICE_WARN] 指派失败，改为仅 @提及方式重试", flush=True)
+                payload.pop("assignees", None)
+                r = requests.post(
+                    f"https://api.github.com/repos/{gh_repo}/issues",
+                    headers=gh_headers,
+                    json=payload,
+                    timeout=10
+                )
             if r.status_code == 201:
                 issue_id = r.json().get("number")
                 print(f"[CLOUD_NOTICE] GitHub Issue #{issue_id} 创建成功，已自动发送邮件/移动端通知！", flush=True)
