@@ -53,17 +53,80 @@ FALLBACK_MONTHLY_TOPICS = [
     )
 ]
 
+def _call_openai_compatible(api_key, base_url, model, prompt):
+    """调用 OpenAI 兼容格式（/chat/completions）的接口，返回 (title, content) 或 None。"""
+    res = requests.post(
+        base_url.rstrip("/") + "/chat/completions",
+        json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.7},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        timeout=20,
+    )
+    res.raise_for_status()
+    text_out = res.json()["choices"][0]["message"]["content"].strip()
+    if "```json" in text_out:
+        text_out = text_out.split("```json", 1)[1].split("```", 1)[0].strip()
+    elif "```" in text_out:
+        text_out = text_out.split("```", 1)[1].split("```", 1)[0].strip()
+    data = json.loads(text_out)
+    if data.get("title") and data.get("content") and len(data["content"]) >= 250:
+        return data["title"], data["content"]
+    return None
+
+
+def _call_gemini(api_key, prompt):
+    """调用 Google Gemini 原生接口，返回 (title, content) 或 None。"""
+    api_url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+               f"gemini-2.5-flash:generateContent?key={api_key}")
+    res = requests.post(api_url,
+                        json={"contents": [{"parts": [{"text": prompt}]}]},
+                        headers={"Content-Type": "application/json"}, timeout=20)
+    res.raise_for_status()
+    text_out = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    if "```json" in text_out:
+        text_out = text_out.split("```json", 1)[1].split("```", 1)[0].strip()
+    elif "```" in text_out:
+        text_out = text_out.split("```", 1)[1].split("```", 1)[0].strip()
+    data = json.loads(text_out)
+    if data.get("title") and data.get("content") and len(data["content"]) >= 250:
+        return data["title"], data["content"]
+    return None
+
+
 def generate_report_content(report_type="week", title_hint="", extra_context="", user=None):
     """
     智能生成高质量报告内容：
-    优先尝试 Gemini API / DeepSeek API（若配置了 GEMINI_API_KEY 或 DEEPSEEK_API_KEY），
-    若无配置则自动从高质量、生活化的轮换知识库中抽取并自动延续，字数严密达标。
+    AI_PROVIDER 选择供应商（deepseek / openai / qwen / kimi / zhipu / gemini），
+    默认 deepseek。密钥读取顺序：对应专用 key -> AI_API_KEY -> GEMINI_API_KEY。
+    未配置或调用失败时自动回退到内置优质轮换文库，绝不影响打卡主流程。
     """
     company_name = (user.get("address") if user else "") or "实习单位"
     user_desc = (user.get("desc") if user else "") or "日常业务实践"
 
-    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("AI_API_KEY")
-    if gemini_key:
+    provider = (os.getenv("AI_PROVIDER") or "deepseek").strip().lower()
+    api_key = (os.getenv("AI_API_KEY") or os.getenv("GEMINI_API_KEY") or "").strip()
+
+    if provider == "gemini":
+        api_key = (os.getenv("GEMINI_API_KEY") or os.getenv("AI_API_KEY") or "").strip()
+    elif provider == "deepseek":
+        api_key = (os.getenv("DEEPSEEK_API_KEY") or api_key).strip()
+    elif provider == "openai":
+        api_key = (os.getenv("OPENAI_API_KEY") or api_key).strip()
+    elif provider == "qwen":
+        api_key = (os.getenv("DASHSCOPE_API_KEY") or api_key).strip()
+    elif provider == "kimi":
+        api_key = (os.getenv("MOONSHOT_API_KEY") or api_key).strip()
+    elif provider == "zhipu":
+        api_key = (os.getenv("ZHIPU_API_KEY") or api_key).strip()
+
+    COMPAT_DEFAULTS = {
+        "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
+        "openai": ("https://api.openai.com/v1", "gpt-4o-mini"),
+        "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
+        "kimi": ("https://api.moonshot.cn/v1", "moonshot-v1-8k"),
+        "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "glm-4-flash"),
+    }
+
+    if api_key:
         try:
             min_words = "350~450" if report_type == "week" else "550~700"
             prompt = (
@@ -76,24 +139,22 @@ def generate_report_content(report_type="week", title_hint="", extra_context="",
                 f"补充上下文信息: {extra_context}\n"
                 f"请输出 JSON 格式: {{\"title\": \"标题\", \"content\": \"正文\"}}"
             )
-            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
-            res = requests.post(
-                api_url,
-                json={"contents": [{"parts": [{"text": prompt}]}]},
-                headers={"Content-Type": "application/json"},
-                timeout=12
-            )
-            if res.status_code == 200:
-                text_out = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                if "```json" in text_out:
-                    text_out = text_out.split("```json")[1].split("```")[0].strip()
-                elif "```" in text_out:
-                    text_out = text_out.split("```")[1].split("```")[0].strip()
-                data = json.loads(text_out)
-                if data.get("title") and data.get("content") and len(data["content"]) >= 250:
-                    return data["title"], data["content"]
+
+            result = None
+            if provider == "gemini":
+                result = _call_gemini(api_key, prompt)
+            else:
+                default_url, default_model = COMPAT_DEFAULTS.get(
+                    provider, COMPAT_DEFAULTS["deepseek"]
+                )
+                base_url = os.getenv("AI_BASE_URL") or default_url
+                model = os.getenv("AI_MODEL") or default_model
+                result = _call_openai_compatible(api_key, base_url, model, prompt)
+
+            if result:
+                return result
         except Exception as e:
-            print(f"[AI_REPORT_WARN] 调用 Gemini API 失败: {e}，启用内置优质文库...", flush=True)
+            print(f"[AI_REPORT_WARN] 调用 {provider} API 失败: {e}，启用内置优质文库...", flush=True)
 
     # 兜底使用内置高质量、字数充足的主题库
     if report_type == "week":
