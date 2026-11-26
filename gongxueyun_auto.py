@@ -5,6 +5,7 @@ import json
 import smtplib
 from email.mime.text import MIMEText
 from email.header import Header
+from email.utils import formataddr
 
 import requests
 import compat_adapter
@@ -71,8 +72,8 @@ def send_email(subject, content, recipient=None):
         return False
     try:
         msg = MIMEText(content, 'plain', 'utf-8')
-        msg['From'] = Header(smtp_user, 'utf-8')
-        msg['To'] = Header(recipient, 'utf-8')
+        msg['From'] = formataddr(('GongXueYun', smtp_user))
+        msg['To'] = recipient
         msg['Subject'] = Header(subject, 'utf-8')
         if smtp_port == 465:
             server = smtplib.SMTP_SSL(smtp_server, smtp_port)
