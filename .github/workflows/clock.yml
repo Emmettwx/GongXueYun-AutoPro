@@ -16,13 +16,10 @@ on:
         required: false
         default: "false"
   schedule:
-    # 考勤定时调度（已配置智能防漏打与强保底机制）：
-    # 1. 每天早晨 09:30 (UTC 01:30) 正常上班打卡
-    # 2. 每天上午 11:15 (UTC 03:15) 上班二次保底补签（若9:30已打过则智能秒跳过，未打过则发起补签）
-    # 3. 每天下午 17:30 (UTC 09:30) 正常下班打卡
-    # 4. 每天晚上 19:30 (UTC 11:30) 下班二次保底补签（若17:30已打过则智能秒跳过，未打过则发起补签）
-    - cron: "30 1,9 * * *"
-    - cron: "15 3 * * *"
+    # 下班打卡 + 自动补签（代码内置判重：已打过则自动跳过，不会重复打卡）
+    # 1. 北京时间 18:30 (UTC 10:30) 正常下班打卡
+    # 2. 北京时间 19:30 (UTC 11:30) 自动补签保底（若18:30已成功则秒跳过）
+    - cron: "30 10 * * *"
     - cron: "30 11 * * *"
 
 concurrency:
@@ -53,7 +50,7 @@ jobs:
       - name: Run checkin script
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SIGN_TYPE: ${{ inputs.sign_type }}
+          SIGN_TYPE: ${{ github.event_name == 'schedule' && 'END' || inputs.sign_type }}
           FORCE_CHECKIN: ${{ inputs.force_checkin }}
           PHONE: ${{ secrets.PHONE }}
           PASSWORD: ${{ secrets.PASSWORD }}
@@ -76,6 +73,8 @@ jobs:
           SATURDAY_CHECKIN: ${{ secrets.SATURDAY_CHECKIN || 'true' }}
           REPORT_START_DATE: ${{ secrets.REPORT_START_DATE }}
           SURVEY_OPTION_INDEX: ${{ secrets.SURVEY_OPTION_INDEX || '0' }}
+          AUTO_MAKEUP: ${{ secrets.AUTO_MAKEUP || 'true' }}
+          MAKEUP_LOOKBACK_DAYS: ${{ secrets.MAKEUP_LOOKBACK_DAYS || '0' }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
           PROXY_API_URL: ${{ secrets.PROXY_API_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
