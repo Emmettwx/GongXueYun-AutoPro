@@ -159,24 +159,6 @@ def main():
     clock_res = {}
     report_res = {}
 
-    # 自动补签申请：在打卡前提交本月缺失工作日的补签申请（需管理员审批）
-    if args.mode in ("auto", "clock") and os.getenv("AUTO_MAKEUP", "").strip().lower() in ["1", "true", "yes"]:
-        try:
-            from modules.get_login_token import get_token
-            from modules.get_plan_id import get_plan_id
-            from modules.crypto_aes import create_sign
-            from modules.makeup_sign import submit_makeup_requests
-            makeup_user = users[0]
-            mu = get_token(makeup_user)
-            if mu and mu.get("token") and mu.get("userId"):
-                mu_sign = create_sign(str(mu["userId"]) + "student")
-                mu_plan = get_plan_id(makeup_user, mu["token"], mu_sign)
-                makeup_res = submit_makeup_requests(
-                    makeup_user, mu["token"], mu["userId"], mu_plan, mu_sign, sign_type="END"
-                )
-                print(f"[CLOCK_API_RAW] Makeup result: {json.dumps(makeup_res, ensure_ascii=False)}", flush=True)
-        except Exception as e:
-            print(f"[MAKEUP_WARN] 自动补签申请流程异常: {e}", flush=True)
     if args.mode == "report":
         print("[CLOCK_API_RAW] 当前为周月报专项模式，跳过打卡直接执行周月报自动管理与补齐", flush=True)
         clock_res = {"status": "skipped", "message": "Report mode"}
@@ -190,6 +172,44 @@ def main():
         print(f"[CLOCK_API_RAW] Clock/Sign-in result: {json.dumps(clock_res, ensure_ascii=False)}")
         report_res = submit_reports(users)
 
+    # 自动补签申请：放在打卡之后，复用刚登录好的会话凭证（避免重复触发滑块登录）
+    if args.mode in ("auto", "clock") and os.getenv("AUTO_MAKEUP", "").strip().lower() in ["1", "true", "yes"]:
+        try:
+            from modules.get_login_token import get_token
+            from modules.get_plan_id import get_plan_id
+            from modules.crypto_aes import create_sign
+            from modules.makeup_sign import submit_makeup_requests
+            makeup_user = users[0]
+            mu = get_token(makeup_user)  # 此时缓存已写入，直接复用，不会再走滑块
+            if mu and mu.get("token") and mu.get("userId"):
+                mu_sign = create_sign(str(mu["userId"]) + "student")
+                mu_plan = get_plan_id(makeup_user, mu["token"], mu_sign)
+                makeup_res = submit_makeup_requests(
+                    makeup_user, mu["token"], mu["userId"], mu_plan, mu_sign, sign_type="END"
+                )
+                print(f"[CLOCK_API_RAW] Makeup result: {json.dumps(makeup_res, ensure_ascii=False)}", flush=True)
+            else:
+                print("[MAKEUP_SKIP] 未获取到有效凭证，跳过补签", flush=True)
+        except Exception as e:
+            print(f"[MAKEUP_WARN] 自动补签申请流程异常: {e}", flush=True)
+
+    # 打卡结果为空：多半是海外 IP 被拦或网络不通，给出明确诊断并邮件通知
+    if args.mode in ("auto", "clock") and isinstance(clock_res, list) and len(clock_res) == 0:
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        now_str = _dt.now(_tz(_td(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+        net_msg = (
+            f"【风控/网络失败记录】北京时间 {now_str}\n\n"
+            "本轮打卡未产生任何结果，常见原因：\n"
+            "1. GitHub Actions 海外 IP 被工学云风控拦截（最常见）；\n"
+            "2. api.moguding.net:9000 网络不可达。\n\n"
+            "本次为多轮重试中的一次，若后续时段成功会自动打卡，您无需操作。\n"
+            "如连续多日全部失败，说明 IP 已被长期封禁，需配置 PROXY_URL 国内代理。\n"
+            "提示：可据每封失败邮件的北京时间，统计风控持续了多久才恢复。"
+        )
+        print(f"[CLOCK_API_RAW] {net_msg}", flush=True)
+        compat_adapter.notify_all("工学云打卡失败：网络/风控拦截", net_msg)
+        send_email("【工学云】打卡失败：网络或风控拦截", net_msg)
+        return
     # AI 生成失败导致报告流程中止：邮件通知后结束本轮，避免继续使用空内容提交
     if isinstance(report_res, dict) and report_res.get("status") == "aborted":
         abort_text = report_res.get("message", "AI 报告生成失败，已中止提交")
