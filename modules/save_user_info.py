@@ -1,10 +1,54 @@
-import json, time, requests, os, urllib3, urllib.parse, urllib.request
+import json, time, requests, os, urllib3, urllib.parse, urllib.request, smtplib
+from email.mime.text import MIMEText
+from email.header import Header
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from modules.map_headers import header_user_agent
 from modules.crypto_aes import aes_encrypt, create_sign
 
 # 全局收集 304 安全验证详情
 latest_auth_info = {}
+
+
+def _smtp_notify(title, content):
+    """检测到人脸验证时立即发 SMTP 邮件（不依赖主程序末尾的汇总邮件）。"""
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+    recipient = os.getenv("SMTP_TO", "").strip() or smtp_user
+    if not smtp_user or not smtp_password or not recipient:
+        print("[SMTP_NOTIFY] 未配置完整 SMTP（SMTP_USER/SMTP_PASSWORD/SMTP_TO），跳过即时邮件", flush=True)
+        return False
+    try:
+        port = int((os.getenv("SMTP_PORT") or "465").strip() or "465")
+    except ValueError:
+        port = 465
+    server = os.getenv("SMTP_SERVER", "smtp.qq.com").strip()
+    try:
+        msg = MIMEText(content, "plain", "utf-8")
+        msg["From"] = Header(smtp_user, "utf-8")
+        msg["To"] = Header(recipient, "utf-8")
+        msg["Subject"] = Header(title, "utf-8")
+        if port == 465:
+            client = smtplib.SMTP_SSL(server, port, timeout=15)
+        else:
+            client = smtplib.SMTP(server, port, timeout=15)
+            client.starttls()
+        client.login(smtp_user, smtp_password)
+        client.sendmail(smtp_user, [recipient], msg.as_string())
+        client.quit()
+        print(f"[SMTP_NOTIFY] 即时验证邮件已发送至 {recipient}", flush=True)
+        return True
+    except Exception as e:
+        print(f"[SMTP_NOTIFY_WARN] 即时验证邮件发送失败: {e}", flush=True)
+        return False
+
+
+def _build_pages_jump_url(reg_url):
+    """构造 GitHub Pages 中转页链接（手机点普通 https 链接即可唤起支付宝）。"""
+    gh_repo = os.getenv("GITHUB_REPOSITORY", "").strip()
+    if not gh_repo or "/" not in gh_repo:
+        return ""
+    owner, repo_name = gh_repo.split("/", 1)
+    return f"https://{owner}.github.io/{repo_name}/jump.html?url={urllib.parse.quote(reg_url)}"
 
 def get_saved_out_reg(user=None):
     if user and user.get("outRegisterNo"):
@@ -86,15 +130,20 @@ def dispatch_cloud_notice(out_no, reg_url, sign_type="打卡", is_refresh=False)
             issue_title = f"【工学云{sign_type}】请在手机上点击链接完成人脸安全验证"
             if is_refresh:
                 issue_title = f"【工学云{sign_type}】验证已自动续期，请用最新链接完成人脸核验"
+            pages_url = _build_pages_jump_url(reg_url)
+            pages_block = (
+                f"\n\n- **👉👉 手机点此链接唤起支付宝（推荐）**:\n{pages_url}\n"
+                f"> 若微信内打不开，请点右上角【···】选择【在浏览器打开】\n"
+            ) if pages_url else ""
             issue_body = (
                 f"## 📱 工学云打卡安全验证提醒\n\n"
                 f"GitHub Actions 云端正在执行工学云 **{sign_type}** 任务。\n"
                 f"因工学云风控检测到云服务器访问，需进行一次手机实名/人脸核验：\n\n"
                 f"- **最新验证单号**: `{out_no}`\n"
-                f"- **👉 支付宝核验直跳链接**:\n```text\n{reg_url}\n```\n\n"
+                f"- **👉 支付宝核验直跳链接（支付宝内打开）**:\n```text\n{reg_url}\n```\n"
                 f"> ⏱️ **云端后台已开启长效自动续期（总计最长等待 30 分钟）**\n"
                 f"> 平台官方单号每 5 分钟失效一次，若过期云端将**自动刷新单号并更新通知**。\n"
-                f"> 您在手机上随时点击**最新链接**在支付宝完成人脸核验，云端将**自动完成打卡**并关闭本通知！"
+                f"> 您在手机上随时点击**最新链接**在支付宝完成人脸核验，云端将**自动完成打卡**并关闭本通知！" + pages_block
             )
             r = requests.post(
                 f"https://api.github.com/repos/{gh_repo}/issues",
@@ -162,6 +211,15 @@ def dispatch_cloud_notice(out_no, reg_url, sign_type="打卡", is_refresh=False)
         except Exception:
             pass
 
+    # 5. 即时 SMTP 邮件通知（不必等 30 分钟轮询结束，含中转页链接）
+    email_body = (
+        f"工学云{sign_type}需要支付宝人脸/实名安全验证。\n\n"
+        f"最新验证单号: {out_no}\n"
+        f"手机点此链接唤起支付宝（推荐）: {_build_pages_jump_url(reg_url) or reg_url}\n\n"
+        f"若打不开，请复制以下原始链接到手机支付宝打开:\n{reg_url}\n\n"
+        f"云端已开启自动续期轮询，最长等待 30 分钟；单号每 5 分钟过期会自动刷新并推送新链接。"
+    )
+    _smtp_notify(f"【工学云】{sign_type}需要安全验证（请及时刷脸）", email_body)
     return issue_id
 
 # 保存用户的签到信息
