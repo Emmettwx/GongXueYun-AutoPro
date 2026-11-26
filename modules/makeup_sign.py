@@ -5,6 +5,7 @@
 补签申请提交后需管理员在网页/APP审批，本模块只负责自动提交，不保证审批通过。
 """
 import os
+import json
 import re
 import time
 import calendar
@@ -34,6 +35,21 @@ def _headers(token, user_id, sign_val):
         "user-agent": "Dart/3.7 (dart:io)",
     }
 
+
+def _legacy_headers(token, user_id, sign_val):
+    """补签接口 attendanceReplace/v2/save 是老接口，必须用老式请求头（Android 浏览器 UA，不带 v6 版本号）。"""
+    return {
+        "Host": "api.moguding.net:9000",
+        "accept-language": "zh-CN,zh;q=0.8",
+        "user-agent": "Mozilla/5.0 (Linux; U; Android 9; zh-cn; SM-G977N Build/LMY48Z) AppleWebKit/533.1 (KHTML, like Gecko) Version/5.0 Mobile Safari/533.1",
+        "authorization": token,
+        "rolekey": "student",
+        "userid": str(user_id),
+        "sign": sign_val,
+        "content-type": "application/json; charset=UTF-8",
+        "accept-encoding": "gzip",
+        "cache-control": "no-cache",
+    }
 
 def get_undated_days(token, user_id, plan_id, sign_info):
     """查询本月已打卡日期，返回本月内未打卡且需要补签的日期字符串列表。"""
@@ -108,8 +124,8 @@ def submit_makeup_requests(user, token, user_id, plan_id, sign_info, sign_type="
     lat = str(user.get("latitude", ""))
 
     # 补签签名格式借鉴自 gonxueyun 项目：Android + 类型 + 计划 + 用户 + 地址 + 密钥
-    makeup_sign = create_sign("Android", sign_type, plan_id, str(user_id), address)
-    headers = _headers(token, user_id, makeup_sign)
+    # 参考实现中补签固定按 START（上班卡）提交，接口会按此受理
+    # 关键：补签必须用老式请求头，否则会返回"请到应用商店下载最新版本APP"
 
     base_payload = {
         "device": "Android",
@@ -122,19 +138,22 @@ def submit_makeup_requests(user, token, user_id, plan_id, sign_info, sign_type="
         "t": aes_encrypt(str(int(time.time() * 1000))),
         "planId": plan_id,
         "province": province,
-        "type": sign_type,
+        "type": "START",
     }
 
     ok, failed = 0, 0
     for day in missing:
         payload = dict(base_payload)
-        # 补签时间设为当天 18:30（下班卡时间）
-        payload["createTime"] = f"{day} 18:30:00"
+        # 补签时间参考 v2.0 实现：随机早上 08~09 点，接口按 START 类型受理
+        import random
+        hh = random.randint(8, 9)
+        mm, ss = random.randint(10, 59), random.randint(10, 59)
+        payload["createTime"] = f"{day} 0{hh}:{mm}:{ss}"
         payload["t"] = aes_encrypt(str(int(time.time() * 1000)))
         try:
             res = requests.post(
                 f"{BASE_URL}/attendence/attendanceReplace/v2/save",
-                json=payload,
+                data=json.dumps(payload),
                 headers=headers,
                 verify=False,
                 timeout=15,
