@@ -1,60 +1,55 @@
 import os
 import json
-import random
 import requests
 
-# 预设高质量、生活化、每周各不相同的实习周报模板库（350~500字，满足高校后台字数严苛校验）
-FALLBACK_WEEKLY_TOPICS = [
-    (
-        "深入业务实操与流程规范执行",
-        "本周主要深入到了所在岗位的核心日常实操工作当中。在带教老师的细心指引与团队同事的热情帮助下，我严格对照各项业务规范与操作流程，认真完成了多项基础数据的核验、录入与台账归档任务。\n"
-        "在实际操作过程中，我主动将课堂上所学的理论知识与具体工作场景相融合，对整个业务链条的运转逻辑有了更加全面深刻的认知。面对部分交接环节中容易出现的格式偏差，我养成了二次复核的严谨习惯，确保经手流转的信息准确无误，有效提升了单项事务的办结质量。\n"
-        "通过本周的高强度实操锻炼，我的工作专注度和突发问题排查能力均有了显著提升。下一步我将继续保持谦虚好学的作风，主动向资深前辈请教业务优化经验，进一步加快常规任务的推进节奏，争取在下一阶段的实习工作中展现更大的价值与担当。"
-    ),
-    (
-        "专业技能实践进阶与协作沟通优化",
-        "本周的实习重心在于常规事务的高效推进以及跨部门配合协作的综合演练。在带教老师的悉心指导下，我独立跟进了多个阶段性事务节点，并在实践中认真记录了业务执行细节与常见问题规避清单。\n"
-        "在与其他岗位同事沟通对接的过程中，我深刻领会到了信息对称与敏捷协同的关键意义。面对多头推进的工作要求，我学会了按照轻重缓急科学梳理优先级，做到件件有落实、事事有回音，保证了所属环节的稳步落地。\n"
-        "这周的实践不仅拓宽了我的专业视野，更极大锻炼了我的抗压意识与沟通协调水平。接下来的工作里，我将认真做好阶段性复盘总结，深入查漏补缺，争取将更多精力投入到综合性业务分析之中，保质保量完成各项既定目标。"
-    ),
-    (
-        "日常业务复盘梳理与工作效率提升",
-        "本周实习工作进展顺利，主要围绕常规业务的提质增效与综合实践展开。在按时按量完成日常派工与台账更新的同时，我主动参与了对前一阶段工作成果的系统性梳理工作。\n"
-        "通过与带教老师的深入探讨，我对当前岗位的业务痛点和执行标准有了更为客观理性的认识。在老师的鼓励下，我尝试对个人工作流程进行了微调，通过分类归档与模板化处理，使得事务处理时间缩短了近两成，得到了团队领导的肯定与认可。\n"
-        "回顾本周历程，我越发体会到严谨细致与主动思考的重要性。下周我将继续巩固已有成果，不断夯实岗位专业基础，主动承担更具挑战性的辅助性任务，以昂扬充沛的热情投入到后续的实习实践中。"
-    ),
-    (
-        "查漏补缺与深化专业业务实践",
-        "本周主要在常规岗位业务处理的基础之上，重点针对日常执行中容易忽略的琐碎细节进行了专项自查与查漏补缺。结合一线真实应用需求，对操作中存在的瓶颈进行了认真推敲。\n"
-        "在老师的指导帮助下，我不仅熟练掌握了配套软硬件系统的标准化操作手法，更在面对复杂业务场景时培养了沉着冷静的分析思维。遇到疑问时积极请教、及时记录，逐步建立起了一套适合自己的工作方法论。\n"
-        "这段时间的锻炼让我体会到了从学生向职场新人转变的责任感。下一阶段我将继续严格要求自己，增强工作执行力与纪律观念，脚踏实地做好每一项基础工作，力争圆满完成学校与单位要求的各项实习任务。"
-    ),
-    (
-        "综合任务跟进与岗位担当作为",
-        "本周主要参与并协助推进了多项综合性事务的落地实施。面对较为紧凑的工作节奏，我始终保持饱满昂扬的工作态度，严格遵守单位的各项考勤规章与保密制度，踏实做好日常记录与数据汇总。\n"
-        "在老师的带领下，我参与了关键材料的归集与初审工作，体会到了基层事务严谨细致背后的重要支撑作用。通过多任务并行的实际锻炼，我的多线程处理能力和团队融入度均得到了实打实的提升。\n"
-        "下周我将保持积极进取的姿态，注重知识沉淀与技能复盘，主动寻找自身不足并加以改正，以更严的标准、更高的效率完成带教老师交办的每一项任务。"
-    )
-]
+def _extract_json(text):
+    """从模型返回文本中稳健提取 JSON 对象：兼容 ```json 包裹、前后废话、单引号等。"""
+    import re
+    text = (text or "").strip()
+    text = re.sub(r"^```(?:json)?", "", text, flags=re.I).strip()
+    text = re.sub(r"```$", "", text).strip()
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+    s, e = text.find("{"), text.rfind("}")
+    if s >= 0 and e > s:
+        frag = text[s:e + 1]
+        try:
+            obj = json.loads(frag)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+        fixed = frag.replace(chr(39), chr(34))
+        fixed = re.sub(r",\s*}", "}", fixed)
+        try:
+            obj = json.loads(fixed)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+    return None
 
-# 预设月报模板库（550~800字，深度复盘与规划）
-FALLBACK_MONTHLY_TOPICS = [
-    (
-        "月度实习综合总结与成长收获汇报",
-        "在过去的一个月中，在单位领导的亲切关怀和带教老师的悉心指导下，我始终秉持勤奋敬业、严谨务实的工作作风，扎实投入到岗位的各项日常事务与专业实践之中，圆满完成了本月度的各项预定目标。\n"
-        "本月度内，我的综合能力取得了长足的进步。一方面，在专业技能维度，我系统掌握了所属业务模块的标准化运作规程，对各类工具系统的实操运用达到了熟练规范的水平，能够独立跟进常规事务的流转、审核与台账沉淀，经手事务差错率显著降低；另一方面，在职业素养维度，我深刻体会到了团队协同与有效沟通的不可替代性，面对多维任务能够条分缕析、厘清轻重缓急，抗压能力和应变技巧得到了充分磨砺。\n"
-        "在看到成绩的同时，我也清醒认识到自己在业务深度理解和全局视野把握上仍有进一步挖掘的空间。展望下个月的工作，我将继续脚踏实地、虚心好学，主动向优秀前辈看齐，努力在攻坚克难中增长才干，以更高的执行力向学校和实习单位交出一份满意的答卷。"
-    ),
-    (
-        "深入一线实践与综合素养跃升月度报告",
-        "时光飞逝，本月的顶岗实习工作已圆满告一段落。在这一个月充实紧凑的一线工作中，我实现了从理论认知到现场实操的深度跨越，对所学专业的行业发展脉络与企业岗位职责有了更为生动立体的领悟。\n"
-        "本月我的主要工作涵盖了日常业务处理、多节点事务配合以及阶段性数据汇总。带教老师不仅在专业手法上倾囊相授，更在严谨负责的职业态度上为我树立了标杆。在遇到复杂或突发状况时，我逐渐克服了最初的焦虑情绪，能够按照标准处置预案有条不紊地展开排查，做到手勤、眼勤、脑勤，保证了自身所负责板块的高效运转。\n"
-        "通过这个月的实战检验，我进一步强化了遵章守纪意识与集体协作精神。接下来的实习周期里，我将持续保持求知若渴的求索心态，加大在核心业务技能上的钻研力度，注重每日复盘与知识积累，力求在接下来的阶段性任务中取得更优异的表现。"
-    )
-]
+
+def _check_min_length(content, report_type):
+    """正文不达配置下限（周报 WEEK_MIN_WORDS=300 / 月报 MONTH_MIN_WORDS=600）视为失败，由调用方中止并通知。"""
+    try:
+        if report_type == "month":
+            min_len = int((os.getenv("MONTH_MIN_WORDS") or "600").strip() or "600")
+        else:
+            min_len = int((os.getenv("WEEK_MIN_WORDS") or "300").strip() or "300")
+    except ValueError:
+        min_len = 600 if report_type == "month" else 300
+    content = (content or "").strip()
+    if len(content) < min_len:
+        raise ValueError(f"AI 生成正文仅 {len(content)} 字，低于平台要求的 {min_len} 字，已中止提交")
+    return content
 
 def _call_openai_compatible(api_key, base_url, model, prompt):
-    """调用 OpenAI 兼容格式（/chat/completions）的接口，返回 (title, content) 或 None。"""
+    """调用 OpenAI 兼容格式接口，返回 (title, content) 或 None。"""
     res = requests.post(
         base_url.rstrip("/") + "/chat/completions",
         json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.7},
@@ -63,13 +58,9 @@ def _call_openai_compatible(api_key, base_url, model, prompt):
     )
     res.raise_for_status()
     text_out = res.json()["choices"][0]["message"]["content"].strip()
-    if "```json" in text_out:
-        text_out = text_out.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif "```" in text_out:
-        text_out = text_out.split("```", 1)[1].split("```", 1)[0].strip()
-    data = json.loads(text_out)
-    if data.get("title") and data.get("content") and len(data["content"]) >= 250:
-        return data["title"], data["content"]
+    data = _extract_json(text_out)
+    if data and data.get("title") and data.get("content"):
+        return data["title"].strip(), data["content"].strip()
     return None
 
 
@@ -82,22 +73,18 @@ def _call_gemini(api_key, prompt):
                         headers={"Content-Type": "application/json"}, timeout=20)
     res.raise_for_status()
     text_out = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    if "```json" in text_out:
-        text_out = text_out.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif "```" in text_out:
-        text_out = text_out.split("```", 1)[1].split("```", 1)[0].strip()
-    data = json.loads(text_out)
-    if data.get("title") and data.get("content") and len(data["content"]) >= 250:
-        return data["title"], data["content"]
+    data = _extract_json(text_out)
+    if data and data.get("title") and data.get("content"):
+        return data["title"].strip(), data["content"].strip()
     return None
 
 
-def generate_report_content(report_type="week", title_hint="", extra_context="", user=None):
+def generate_report_content(report_type="week", title_hint="", extra_context="", user=None, week_index=None):
     """
     智能生成高质量报告内容：
     AI_PROVIDER 选择供应商（deepseek / openai / qwen / kimi / zhipu / gemini），
     默认 deepseek。密钥读取顺序：对应专用 key -> AI_API_KEY -> GEMINI_API_KEY。
-    未配置或调用失败时自动回退到内置优质轮换文库，绝不影响打卡主流程。
+    未配置密钥或调用失败（含重试 2 次后仍失败）时直接抛异常，由调用方中止并邮件通知；正文不足平台下限视为失败。
     """
     company_name = (user.get("address") if user else "") or "实习单位"
     user_desc = (user.get("desc") if user else "") or "日常业务实践"
@@ -128,40 +115,62 @@ def generate_report_content(report_type="week", title_hint="", extra_context="",
 
     if api_key:
         try:
-            min_words = "350~450" if report_type == "week" else "550~700"
+            try:
+                week_min = int((os.getenv("WEEK_MIN_WORDS") or "300").strip() or "300")
+                month_min = int((os.getenv("MONTH_MIN_WORDS") or "600").strip() or "600")
+            except ValueError:
+                week_min, month_min = 300, 600
+            min_words = f"{month_min}~{month_min + 120}" if report_type == "month" else f"{week_min}~{week_min + 100}"
             prompt = (
                 f"你是一名在【{company_name}】认真参与【{user_desc}】的大学生实习生。\n"
                 f"请帮我撰写一篇真实的工学云【{'周报' if report_type == 'week' else '月报'}】。\n"
                 f"要求：\n"
                 f"1. 标题简练，如'{title_hint or '实习总结'}'\n"
-                f"2. 正文字数必须在 {min_words} 字左右，分 3 段，语言诚恳自然、积极向上，体现学习过程、工作心得和下一步计划；\n"
-                f"3. 绝对不要包含 markdown 标记、不要出现'作为一个AI'、不要出现占位符，纯中文正文。\n"
+                f"2. 正文字数必须在 {min_words} 字以上，分 3 段，语言诚恳自然、积极向上，体现学习过程、工作心得和下一步计划；\n"
+                f"3. 必须且只输出一个合法的 JSON 对象，不要输出任何解释文字、不要 markdown 代码块，格式为 {{\"title\":\"标题\",\"content\":\"正文\"}}，正文中的换行请用 \\n 表示；\n"
+                f"4. 不要出现'作为一个AI'、不要出现占位符，纯中文正文。\n"
                 f"补充上下文信息: {extra_context}\n"
-                f"请输出 JSON 格式: {{\"title\": \"标题\", \"content\": \"正文\"}}"
+                "内容必须紧扣上述岗位工作展开，写具体做了什么、遇到什么问题、如何解决；不同周次/月份侧重不同阶段进展，不要写成通用套话。\n"
             )
+            if report_type == "week" and week_index:
+                prompt += f"这是实习第{week_index}周的周报，请聚焦本周的阶段进展，与之前周次有明显区别。\n"
 
             result = None
-            if provider == "gemini":
-                result = _call_gemini(api_key, prompt)
-            else:
-                default_url, default_model = COMPAT_DEFAULTS.get(
-                    provider, COMPAT_DEFAULTS["deepseek"]
-                )
-                base_url = os.getenv("AI_BASE_URL") or default_url
-                model = os.getenv("AI_MODEL") or default_model
-                result = _call_openai_compatible(api_key, base_url, model, prompt)
+            last_error = None
+            max_attempts = 3  # 首次 + 自动重试 2 次
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    if provider == "gemini":
+                        result = _call_gemini(api_key, prompt)
+                    else:
+                        default_url, default_model = COMPAT_DEFAULTS.get(
+                            provider, COMPAT_DEFAULTS["deepseek"]
+                        )
+                        base_url = os.getenv("AI_BASE_URL") or default_url
+                        model = os.getenv("AI_MODEL") or default_model
+                        result = _call_openai_compatible(api_key, base_url, model, prompt)
 
-            if result:
-                return result
+                    if result:
+                        checked = _check_min_length(result[1], report_type)
+                        if attempt > 1:
+                            print(f"[AI_REPORT_INFO] 第 {attempt} 次尝试生成成功", flush=True)
+                        return result[0], checked
+                    last_error = "API 未返回有效 JSON（title/content 缺失或为空）"
+                except Exception as e:
+                    last_error = e
+
+                if attempt < max_attempts:
+                    wait_sec = 2 * attempt  # 2s、4s 递增退避
+                    print(f"[AI_REPORT_WARN] 调用 {provider} API 第 {attempt}/{max_attempts} 次失败: {last_error}，{wait_sec} 秒后重试...", flush=True)
+                    import time
+                    time.sleep(wait_sec)
+                else:
+                    print(f"[AI_REPORT_WARN] 调用 {provider} API 连续 {max_attempts} 次失败，停止重试: {last_error}", flush=True)
         except Exception as e:
-            print(f"[AI_REPORT_WARN] 调用 {provider} API 失败: {e}，启用内置优质文库...", flush=True)
+            last_error = e
+            print(f"[AI_REPORT_WARN] 调用 {provider} API 异常: {e}", flush=True)
 
-    # 兜底使用内置高质量、字数充足的主题库
-    if report_type == "week":
-        item = random.choice(FALLBACK_WEEKLY_TOPICS)
-        title = title_hint if title_hint else item[0]
-        return title, item[1]
-    else:
-        item = random.choice(FALLBACK_MONTHLY_TOPICS)
-        title = title_hint if title_hint else item[0]
-        return title, item[1]
+    # 未配置密钥或调用失败：不再使用内置模板，直接抛出异常由调用方中止并邮件通知
+    raise RuntimeError(
+        f"[AI_REPORT_ABORT] AI 报告生成失败（供应商={provider}，重试2次后仍失败）：{last_error if 'last_error' in locals() and last_error else '未配置密钥或调用失败'}，已取消本轮报告提交，请检查 Secrets 与日志。"
+    )
